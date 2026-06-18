@@ -7,6 +7,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [depth, setDepth] = useState(0)
+  const [phThreshold, setPhThreshold] = useState(7.0)
   const [dataVersion, setDataVersion] = useState(0)
 
   const fetchData = useCallback(async (depthValue) => {
@@ -79,6 +80,28 @@ export default function App() {
           <div className="slider-labels">
             <span>表层 0cm</span>
             <span>深层 100cm</span>
+          </div>
+        </div>
+        <div className="filter-item">
+          <label className="filter-label">
+            等值面 pH 阈值: <span className="filter-value ph-threshold-val">{phThreshold.toFixed(1)}</span>
+          </label>
+          <input
+            type="range"
+            min="0"
+            max="14"
+            step="0.1"
+            value={phThreshold}
+            onChange={(e) => setPhThreshold(Number(e.target.value))}
+            className="ph-threshold-slider"
+          />
+          <div className="slider-labels">
+            <span>0 极酸</span>
+            <span>7 中性</span>
+            <span>14 极碱</span>
+          </div>
+          <div className="threshold-hint">
+            高于此值的采样点柱顶将用金色连线连成等值面网格
           </div>
         </div>
         <div className="filter-actions">
@@ -156,6 +179,7 @@ export default function App() {
             stats={stats}
             dataVersion={dataVersion}
             loading={loading}
+            phThreshold={phThreshold}
           />
         </div>
       )}

@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, useEffect } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Text, Html } from '@react-three/drei'
 import * as THREE from 'three'
+import Delaunator from 'delaunator'
 
 const PLOT_SIZE = 100
 const SOIL_DEPTH = 8
@@ -277,7 +278,128 @@ function BarsContainer({ samples, dataVersion }) {
   )
 }
 
-function Scene({ samples, dataVersion }) {
+function IsolineBoundary({ samples, phThreshold }) {
+  const linesRef = useRef()
+  const meshRef = useRef()
+
+  const { edgeGeometry, meshGeometry, qualifiedCount } = useMemo(() => {
+    const qualified = samples.filter((s) => s.ph > phThreshold)
+
+    if (qualified.length < 3) {
+      return { edgeGeometry: null, meshGeometry: null, qualifiedCount: qualified.length }
+    }
+
+    const coords = []
+    qualified.forEach((s) => {
+      coords.push(s.x, s.y)
+    })
+
+    let triangulation
+    try {
+      triangulation = new Delaunator(coords)
+    } catch {
+      return { edgeGeometry: null, meshGeometry: null, qualifiedCount: qualified.length }
+    }
+
+    const topPositions = qualified.map((s) => {
+      const h = (s.ph - MIN_PH) / (MAX_PH - MIN_PH) * SCALE_HEIGHT + 0.7
+      return new THREE.Vector3(s.x, h, s.y)
+    })
+
+    const edgePoints = []
+    const triangles = triangulation.triangles
+    const edgeSet = new Set()
+
+    for (let i = 0; i < triangles.length; i += 3) {
+      const ia = triangles[i]
+      const ib = triangles[i + 1]
+      const ic = triangles[i + 2]
+
+      const edges = [
+        [Math.min(ia, ib), Math.max(ia, ib)],
+        [Math.min(ib, ic), Math.max(ib, ic)],
+        [Math.min(ia, ic), Math.max(ia, ic)],
+      ]
+
+      edges.forEach(([a, b]) => {
+        const key = `${a}-${b}`
+        if (!edgeSet.has(key)) {
+          edgeSet.add(key)
+          edgePoints.push(topPositions[a].x, topPositions[a].y, topPositions[a].z)
+          edgePoints.push(topPositions[b].x, topPositions[b].y, topPositions[b].z)
+        }
+      })
+    }
+
+    const edgeGeom = new THREE.BufferGeometry()
+    edgeGeom.setAttribute('position', new THREE.Float32BufferAttribute(edgePoints, 3))
+
+    const meshVerts = []
+    const meshIndices = []
+    const vertMap = new Map()
+
+    for (let i = 0; i < triangles.length; i += 3) {
+      const ia = triangles[i]
+      const ib = triangles[i + 1]
+      const ic = triangles[i + 2]
+
+      ;[ia, ib, ic].forEach((idx) => {
+        if (!vertMap.has(idx)) {
+          vertMap.set(idx, meshVerts.length / 3)
+          meshVerts.push(topPositions[idx].x, topPositions[idx].y, topPositions[idx].z)
+        }
+      })
+
+      meshIndices.push(vertMap.get(ia), vertMap.get(ib), vertMap.get(ic))
+    }
+
+    const meshGeom = new THREE.BufferGeometry()
+    meshGeom.setAttribute('position', new THREE.Float32BufferAttribute(meshVerts, 3))
+    meshGeom.setIndex(meshIndices)
+    meshGeom.computeVertexNormals()
+
+    return { edgeGeometry: edgeGeom, meshGeometry: meshGeom, qualifiedCount: qualified.length }
+  }, [samples, phThreshold])
+
+  useEffect(() => {
+    return () => {
+      if (edgeGeometry) edgeGeometry.dispose()
+      if (meshGeometry) meshGeometry.dispose()
+    }
+  }, [edgeGeometry, meshGeometry])
+
+  if (!edgeGeometry || !meshGeometry) {
+    return null
+  }
+
+  return (
+    <group>
+      <lineSegments ref={linesRef} geometry={edgeGeometry}>
+        <lineBasicMaterial
+          color="#ffd700"
+          linewidth={2}
+          transparent
+          opacity={0.85}
+        />
+      </lineSegments>
+      <mesh ref={meshRef} geometry={meshGeometry}>
+        <meshStandardMaterial
+          color="#ffd700"
+          emissive="#ffd700"
+          emissiveIntensity={0.3}
+          transparent
+          opacity={0.12}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          roughness={0.5}
+          metalness={0.3}
+        />
+      </mesh>
+    </group>
+  )
+}
+
+function Scene({ samples, dataVersion, phThreshold }) {
   return (
     <>
       <ambientLight intensity={0.55} />
@@ -303,6 +425,7 @@ function Scene({ samples, dataVersion }) {
 
       <SceneOrphanCleaner dataVersion={dataVersion} />
       <BarsContainer samples={samples} dataVersion={dataVersion} />
+      <IsolineBoundary samples={samples} phThreshold={phThreshold} />
 
       <OrbitControls
         enablePan
@@ -320,7 +443,7 @@ function Scene({ samples, dataVersion }) {
   )
 }
 
-export default function SoilScene({ samples, stats, dataVersion, loading }) {
+export default function SoilScene({ samples, stats, dataVersion, loading, phThreshold }) {
   return (
     <Canvas
       shadows
@@ -328,7 +451,7 @@ export default function SoilScene({ samples, stats, dataVersion, loading }) {
       gl={{ antialias: true, alpha: false }}
       dpr={[1, 2]}
     >
-      <Scene samples={samples} dataVersion={dataVersion} stats={stats} />
+      <Scene samples={samples} dataVersion={dataVersion} stats={stats} phThreshold={phThreshold} />
     </Canvas>
   )
 }
